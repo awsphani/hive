@@ -57,12 +57,181 @@ home $ vi .hiverc
 set hive.cli.print.current.db=true
 :wq
 
+--------------------------------------------------------------------------------------------------
 
 017:
 https://cwiki.apache.org/confluence/display/Hive/Home#Home-UserDocumentation
 
 create external table with location, when you drop external table metadata is gone but files in the location will not deleted
 for manaaged table drop, it deletes metadata aswell as files in the location
+
+DDL (create/drop/alter/truncate/show/describe), Statistics (analyze), Indexes, Archiving,
+DML (load/insert/update/delete/merge, import/export, explain plan),Queries (select), Operators and UDFs, Locks, Authorization
+
+[awsphani@gw01 awsphani]$ hadoop fs -ls /public/nyse/
+[awsphani@gw01 awsphani]$ hadoop fs -tail /public/nyse/NYSE_2017.txt
+
+hadoop fs -cp /public/nyse /user/awsphani/nyse
+
+create ext table using the data at above location
+
+
+create external table stocks_eod_external
+(
+stockticker string,
+tradedate int,
+openprice float,
+highprice float,
+lowprice float,
+closeprice float,
+volume bigint
+)
+row format delimited fields terminated by ','
+stored as textfile
+location '/user/awsphani/nyse';
+
+select * from stocks_eod_external limit 10;
+describe formatted  stocks_eod_external;
+
+can creare managed table from same data.............
+
+create external table stocks_eod_managed1 
+(
+stockticker string,
+tradedate int,
+openprice float,
+highprice float,
+lowprice float,
+closeprice float,
+volume bigint
+)
+row format delimited fields terminated by ','
+stored as textfile
+location '/user/awsphani/nyse';
+
+
+
+--------------------------------------------------------------------------------------------------
+
+018:
+
+show create table  stocks_eod_external;
+
+CREATE TABLE `stocks_eod_managed`(
+  `stockticker` string, 
+  `tradedate` int, 
+  `openprice` float, 
+  `highprice` float, 
+  `lowprice` float, 
+  `closeprice` float, 
+  `volume` bigint)
+ROW FORMAT DELIMITED 
+  FIELDS TERMINATED BY ','
+  LINES  TERMINATED BY '\n'
+STORED AS TEXTFILE;
+
+describe formatted stocks_eod_managed;
+Location:               hdfs://nn01.itversity.com:8020/apps/hive/warehouse/stocks_eod_manag
+ed
+
+No data in the above location, so load from local 
+
+[awsphani@gw01 ~]$ mkdir /home/awsphani/data/nyse1;
+[awsphani@gw01 ~]$ hadoop fs -copyToLocal /user/awsphani/nyse data/nyse1/
+
+hive> LOAD data local inpath '/home/awsphani/data/nyse1/nyse/' into table stocks_eod_managed
+hive (default)> select count(1) from stocks_eod_managed;
+$ wc -l /home/awsphani/data/nyse1/nyse/*.txt
+
+use awsphani
+--created table with partition:
+CREATE TABLE `stocks_eod_list`(
+  `stockticker` string, 
+  `tradedate` int, 
+  `openprice` float, 
+  `highprice` float, 
+  `lowprice` float, 
+  `closeprice` float, 
+  `volume` bigint)
+PARTITIONED BY (tradeyear int)  
+ROW FORMAT DELIMITED 
+  FIELDS TERMINATED BY ','
+  LINES  TERMINATED BY '\n'
+STORED AS TEXTFILE;
+
+describe formatted stocks_eod_list
+hdfs://nn01.itversity.com:8020/apps/hive/warehouse/awsphani.db/stocks_eod_list
+
+--alter table to add partitions by partitioned column
+
+ALTER TABLE stocks_eod_list ADD PARTITION(tradeyear=2001);
+ALTER TABLE stocks_eod_list ADD PARTITION(tradeyear=2002);
+ALTER TABLE stocks_eod_list ADD PARTITION(tradeyear=2003);
+ALTER TABLE stocks_eod_list ADD PARTITION(tradeyear=2004);
+
+dfs -copyFromLocal /home/awsphani/data/nyse1/nyse/NYSE_2002.txt /apps/hive/warehouse/awsphani.db/stocks_eod_list/tradeyear=2002
+
+--load data in to patitioned hdfs 
+
+hadoop fs -copyFromLocal /home/awsphani/data/nyse1/nyse/NYSE_2002.txt /apps/hive/warehouse/awsphani.db/stocks_eod_list/tradeyear=2002
+
+hive>use awsphani;
+LOAD DATA LOCAL INPATH'/home/awsphani/data/nyse1/nyse/NYSE_2001.txt' into table stocks_eod_list
+PARTITION(tradeyear=2001);
+LOAD DATA LOCAL INPATH'/home/awsphani/data/nyse1/nyse/NYSE_2002.txt' into table stocks_eod_list
+PARTITION(tradeyear=2002);
+LOAD DATA LOCAL INPATH'/home/awsphani/data/nyse1/nyse/NYSE_2003.txt' into table stocks_eod_list
+PARTITION(tradeyear=2003);
+LOAD DATA LOCAL INPATH'/home/awsphani/data/nyse1/nyse/NYSE_2004.txt' into table stocks_eod_list
+PARTITION(tradeyear=2004);
+LOAD DATA LOCAL INPATH'/home/awsphani/data/nyse1/nyse/NYSE_2005.txt' into table stocks_eod_list
+PARTITION(tradeyear=2005);
+
+dfs -tail /apps/hive/warehouse/awsphani.db/stocks_eod_list/tradeyear=2002/N
+YSE_2002.txt;
+dfs -tail /apps/hive/warehouse/awsphani.db/stocks_eod_list/tradeyear=2001/
+NYSE_2001.txt;
+
+select * from stocks_eod_list limit 10
+
+dfs -ls -R /apps/hive/warehouse/awsphani.db/stocks_eod_list/
+
+for load data data should be partitioned properly before loading
+
+cat /home/awsphani/data/nyse1/nyse/* >>nyse_all.txt
+wc -l nyse_all.txt;
+
+2nd way:create non partition table and load data into it then create partitioned table and use insert cmd dynamic partition
+
+
+CREATE TABLE `stocks_eod_managed_nonpart`(
+  `stockticker` string, 
+  `tradedate` int, 
+  `openprice` float, 
+  `highprice` float, 
+  `lowprice` float, 
+  `closeprice` float, 
+  `volume` bigint)
+ROW FORMAT DELIMITED 
+  FIELDS TERMINATED BY ','
+  LINES  TERMINATED BY '\n'
+STORED AS TEXTFILE;
+
+LOAD DATA LOCAL INPATH '/home/awsphani/nyse_all.txt' into table stocks_eod_managed_nonpart
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
