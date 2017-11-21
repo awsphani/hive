@@ -1,0 +1,77 @@
+https://www.youtube.com/watch?v=5YWRQk__xgU&list=PLf0swTFhTI8q4pvjNTcjMPzCYPZIrpPAa&index=45
+https://github.com/dgadiraju/code/tree/master/hadoop/edw/cloudera/hive
+https://github.com/dgadiraju/data
+
+016:
+
+hive is bunch of jar files(execu engine on gatewaynodeprovides cli)+
+hive metastore+hiveserver(in other node, not gateway)
+
+hive>
+
+hive -e "set;"|grep print
+hive -e "set;"|grep warehouse
+set hive.cli.print.current.db=true
+set hive.metastore.warehouse.dir
+
+set  hive.log.dir
+set hive.log.file
+find /usr/hdp/2.5.0.0-1245 -name "*hive*.jar"
+
+create table t (i int, s string);
+metadata of above table stored in hive meta store
+insert into table t values (1, "hello")
+--data from above insert is stored in hdfs
+select count(1) from t;
+
+describe formatted t;
+set hive.metastore.warehouse.dir
+dfs -ls hdfs://server:port/apps/hive/warehouse/database.db/t
+dfs -ls hdfs://nn01.itversity.com:8020/apps/hive/warehouse/awsphani_test.db/t
+dfs -cat hdfs://nn01.itversity.com:8020/apps/hive/warehouse/awsphani_test.db/t/000000_0
+select * from t;
+
+home$ 
+cd /etc/hive/conf
+view hive-site.xml
+mysql -u root -p
+show databases;
+use metastore;
+show tables;
+
+cd /tmp
+cd username
+view hive.log
+cd /etc/hive/conf
+view hive_log4j.properties
+cat /etc/hive/conf/hive_log4j.properties
+
+hive -hiveconf hive.log.dir=//home/awsphani/hive_logs
+cd hive_logs
+view hive.log
+view /etc/hive/conf/hive_log4j.properties
+:x
+
+--can override userlevel parameters for session
+home $ vi .hiverc
+set hive.cli.print.current.db=true
+:wq
+
+
+017:
+https://cwiki.apache.org/confluence/display/Hive/Home#Home-UserDocumentation
+
+create external table with location, when you drop external table metadata is gone but files in the location will not deleted
+for manaaged table drop, it deletes metadata aswell as files in the location
+
+
+
+
+
+
+
+
+
+
+
+
