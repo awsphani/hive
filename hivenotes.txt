@@ -168,6 +168,7 @@ ALTER TABLE stocks_eod_list ADD PARTITION(tradeyear=2001);
 ALTER TABLE stocks_eod_list ADD PARTITION(tradeyear=2002);
 ALTER TABLE stocks_eod_list ADD PARTITION(tradeyear=2003);
 ALTER TABLE stocks_eod_list ADD PARTITION(tradeyear=2004);
+ALTER TABLE stocks_eod_list ADD PARTITION(tradeyear=2005);
 
 dfs -copyFromLocal /home/awsphani/data/nyse1/nyse/NYSE_2002.txt /apps/hive/warehouse/awsphani.db/stocks_eod_list/tradeyear=2002
 
@@ -220,7 +221,548 @@ STORED AS TEXTFILE;
 LOAD DATA LOCAL INPATH '/home/awsphani/nyse_all.txt' into table stocks_eod_managed_nonpart
 
 
+CREATE TABLE `stocks_eod_part_ins`(
+  `stockticker` string, 
+  `tradedate` int, 
+  `openprice` float, 
+  `highprice` float, 
+  `lowprice` float, 
+  `closeprice` float, 
+  `volume` bigint)
+PARTITIONED BY (tradeyear int)  
+ROW FORMAT DELIMITED 
+  FIELDS TERMINATED BY ','
+  LINES  TERMINATED BY '\n'
+STORED AS TEXTFILE;
 
+set hive.exec.dynamic.partition.mode=nonstrict;
+
+insert into table stocks_eod_part_ins partition(tradeyear)
+select t.*, cast(substr(tradedate,1,4)as int) tradeyear from stocks_eod_managed_nonpart t;
+
+https://pkghosh.wordpress.com/2012/05/06/hive-plays-well-with-json/
+http://myitlearnings.com/hive-queries-inserting-data-into-a-partitioned-hive-table-using-static-partitioning/
+http://myitlearnings.com/different-approaches-for-inserting-data-using-dynamic-partitioning-into-a-partitioned-hive-table/
+
+Get metadata of hdfs files
+Hdfs fsck hdfs://server:port/apps/hive/warehouse/database.db/t   -files -locations -blocks
+
+$mkdir git
+Git clone https://github.com/dgadiraju/data.git 
+
+
+CREATE TABLE `stocks_eod_bucket`(
+  `stockticker` string, 
+  `tradeyear` int, 
+  `openprice` float, 
+  `highprice` float, 
+  `lowprice` float, 
+  `closeprice` float, 
+  `volume` bigint)
+CLUSTERED BY (tradeyear)  into 10 buckets
+ROW FORMAT DELIMITED 
+  FIELDS TERMINATED BY ','
+  LINES  TERMINATED BY '\n'
+STORED AS TEXTFILE;
+
+
+set hive.enforce.bucketing=true;
+
+insert into table stocks_eod_bucket
+select stockticker,cast(substr(tradedate,1,4)as int),openprice,highprice,lowprice,closeprice,volume
+from stocks_eod_managed_nonpart ;
+
+or
+
+insert overwrite table stocks_eod_bucket
+select stockticker,cast(substr(tradedate,1,4)as int),openprice,highprice,lowprice,closeprice,volume
+from stocks_eod_managed_nonpart ;
+
+dfs -ls hdfs://nn01.itversity.com:8020/apps/hive/warehouse/awsphani.db/stocks_eod_bucket;
+dfs -tail hdfs://nn01.itversity.com:8020/apps/hive/warehouse/awsphani.db/stocks_eod_bucket/000000_0
+
+insert is handy when some transformation(MR) needs to be done than Load command in hive; load is faster 
+as its not applying any transformation but data needs to be preformatted, its just split data in to blocks and storing in hdfs.
+
+sampling :
+
+select * from stocks_eod_bucket tablesample(bucket 1 out of 10);
+select * from stocks_eod_bucket tablesample(20 percent);
+select * from stocks_eod_bucket tablesample(2 rows);
+----------------------------------------------------------------------------------------------------------------
+
+019:
+use sqoop to import orders;
+
+CREATE TABLE `orders`(
+  `order_id` string, 
+  `order_date` string, 
+  `order_customer_id` int, 
+  `order_status` string
+  )
+ROW FORMAT DELIMITED 
+  FIELDS TERMINATED BY ','
+  LINES  TERMINATED BY '\n'
+STORED AS TEXTFILE;
+
+LOAD DATA INPATH '/apps/hive/warehouse/awsphani.db/orders/' into table orders -> just moves the pointers from source to tgt as both are in hdfs, so it deletes in source as pointer is moved
+
+LOAD DATA LOCAL INPATH ->copies from local to hdfs
+
+
+hive -e "set;"|grep -i compress
+
+set mapreduce.output.fileoutputformat.compress.codec = org.apache.hadoop.io.compress.SnappyCodec
+set mapreduce.output.fileoutputformat.compress.codec = org.apache.hadoop.io.compress.GzipCodec
+
+set hive.exec.compress.output=true;
+set io.compression.codecs;
+
+
+CREATE TABLE `orders_parquet`(
+  `order_id` string, 
+  `order_date` string, 
+  `order_customer_id` int, 
+  `order_status` string
+  )
+ROW FORMAT DELIMITED 
+  FIELDS TERMINATED BY ','
+  LINES  TERMINATED BY '|'
+TBLPROPERTIES ("orc.compress"="SNAPPY")  
+STORED AS PARQUET;
+
+insert into table orders_parquet select * from orders_another;
+
+
+
+---------------------------
+020:
+
+writin to local or other hdfs loc of sql query
+
+INSERT OVERWRITE LOCAL DIRECTORY '/HOME/AWSPHANI/ORDERS_BY_STATUS'
+SELECT order_status,count(1) from orders_another
+GROUP BY order_status;
+
+set hive.execution.engine=tez,mr,spark
+
+$spark-sql --master yarn
+-------------------------------------------------------------------------
+021:
+
+Description
+
+We will be creating several hive tables using different file formats, delimiters and partitioning strategy
+Also we will be loading data into these hive tables
+Data Location
+HDFS - /public/retail_db
+Local - /data/retail_db
+To get data types visit mysql database retail_db using user retail_dba
+
+Problem Statement
+
+Make sure you have 2 databases with your OS User name and then stage and final as suffix
+example: dgadiraju_stage, dgadiraju_final
+dgadiraju_stage - Create external tables in dgadiraju_stage pointing to HDFS location /public/retail_db
+dgadiraju_stage - Make sure at least one table point to different location and use load command to load data from local file system into the hive table
+dgadiraju_final - Create all 6 tables in hive as managed tables, delimiter is "|", also use gzip compression while storing the data
+Also create 2 additional tables for orders and order_items where both tables are bucketed by order_id
+Create another table for orders where data is partitioned by order_month
+
+$mysql -u retail_dba -h nn01.itversity.com -p
+
+mysql>use retail_db
+
+Database changed
+mysql> show tables;
++---------------------+ 
+| Tables_in_retail_db |
++---------------------+
+| categories          |
+| customers           |
+| departments         |
+| order_items         |
+| orders              |
+| products            |
++-----------------------
+
+
+
+
+
+-----------------+-------------+------+-----+---------+----------------+
+| Field           | Type        | Null | Key | Default | Extra          |
++-----------------+-------------+------+-----+---------+----------------+
+| department_id   | int(11)     | NO   | PRI | NULL    | auto_increment |
+| department_name | varchar(45) | NO   |     | NULL    |                |
++-----------------+-------------+------+-----+---------+----------------+
+
+awsphani_stage - Create external tables in dgadiraju_stage pointing to HDFS location /public/retail_db
+
+$ hadoop fs -cp /public/retail_db /user/awsphani/public/
+hive> use awsphani_stage
+
+CREATE EXTERNAL TABLE departments_ext
+(
+department_id int,
+department_name string
+)
+ROW FORMAT DELIMITED FIELDS TERMINATED BY ','LINES  TERMINATED BY '\n'
+STORED AS TEXTFILE
+LOCATION '/user/awsphani/public/retail_db/departments/';
+
+
+
+------------------------+-------------+------+-----+---------+----------------+
+| Field                  | Type        | Null | Key | Default | Extra          |
++------------------------+-------------+------+-----+---------+----------------+
+| category_id            | int(11)     | NO   | PRI | NULL    | auto_increment |
+| category_department_id | int(11)     | NO   |     | NULL    |                |
+| category_name          | varchar(45) | NO   |     | NULL    |                |
++------------------------+-------------+------+-----+---------+----------------+
+
+create external table categories_ext
+(
+category_id int,
+category_department_id int,
+category_name string
+)
+row format delimited fields terminated by ','
+stored as textfile
+location '/user/awsphani/public/retail_db/categories/';
+
+ Field               | Type         | Null | Key | Default | Extra          |
++---------------------+--------------+------+-----+---------+----------------+
+| product_id          | int(11)      | NO   | PRI | NULL    | auto_increment |
+| product_category_id | int(11)      | NO   |     | NULL    |                |
+| product_name        | varchar(45)  | NO   |     | NULL    |                |
+| product_description | varchar(255) | NO   |     | NULL    |                |
+| product_price       | float        | NO   |     | NULL    |                |
+| product_image       | varchar(255) | NO   |     | NULL    |                |
+
+
+create external table products_ext
+(
+product_id int,
+product_category_id int,
+product_name string,
+product_description string,
+product_price float,
+product_image string
+)
+row format delimited fields terminated by ','
+stored as textfile
+location '/user/awsphani/public/retail_db/products/';
+
+-------------------+--------------+------+-----+---------+----------------+
+| Field             | Type         | Null | Key | Default | Extra          |
++-------------------+--------------+------+-----+---------+----------------+
+| customer_id       | int(11)      | NO   | PRI | NULL    | auto_increment |
+| customer_fname    | varchar(45)  | NO   |     | NULL    |                |
+| customer_lname    | varchar(45)  | NO   |     | NULL    |                |
+| customer_email    | varchar(45)  | NO   |     | NULL    |                |
+| customer_password | varchar(45)  | NO   |     | NULL    |                |
+| customer_street   | varchar(255) | NO   |     | NULL    |                |
+| customer_city     | varchar(45)  | NO   |     | NULL    |                |
+| customer_state    | varchar(45)  | NO   |     | NULL    |                |
+| customer_zipcode  | varchar(45)  | NO   |     | NULL    |                |
++-------------------+--------------+------+-----+---------+----------------+
+
+
+create external table customers_ext
+(
+customer_id int,
+customer_fname string,
+customer_lname string,
+customer_email string,
+customer_password string,
+customer_street string,
+customer_city string,
+customer_state string,
+customer_zipcode string
+)
+row format delimited fields terminated by ','
+stored as textfile
+location '/user/awsphani/public/retail_db/customers/';
+
+-------------------+-------------+------+-----+---------+----------------+
+| Field             | Type        | Null | Key | Default | Extra          |
++-------------------+-------------+------+-----+---------+----------------+
+| order_id          | int(11)     | NO   | PRI | NULL    | auto_increment |
+| order_date        | datetime    | NO   |     | NULL    |                |
+| order_customer_id | int(11)     | NO   |     | NULL    |                |
+| order_status      | varchar(45) | NO   |     | NULL    |                |
++-------------------+-------------+------+-----+---------+----------------+
+
+create external table orders_ext
+(
+order_id int,
+order_date string,
+order_customer_id int,
+order_status string
+)
+row format delimited fields terminated by ','
+stored as textfile
+location '/user/awsphani/public/retail_db/orders/';
+
+--------------------------+------------+------+-----+---------+----------------+
+| Field                    | Type       | Null | Key | Default | Extra          |
++--------------------------+------------+------+-----+---------+----------------+
+| order_item_id            | int(11)    | NO   | PRI | NULL    | auto_increment |
+| order_item_order_id      | int(11)    | NO   |     | NULL    |                |
+| order_item_product_id    | int(11)    | NO   |     | NULL    |                |
+| order_item_quantity      | tinyint(4) | NO   |     | NULL    |                |
+| order_item_subtotal      | float      | NO   |     | NULL    |                |
+| order_item_product_price | float      | NO   |     | NULL    |                |
++--------------------------+------------+------+-----+---------+----------------+
+
+create external table order_items_ext
+(
+order_item_id int,
+order_item_order_id int,
+order_item_product_id int,
+order_item_quantity int,
+order_item_subtotal float,
+order_item_product_price float
+)
+row format delimited fields terminated by ','
+stored as textfile
+location '/user/awsphani/public/retail_db/order_items/';
+
+awsphani_stage - Make sure at least one table point to different location and use load command to load data from local file system into the hive table
+
+CREATE EXTERNAL TABLE departments_ext_load
+(
+department_id int,
+department_name string
+)
+ROW FORMAT DELIMITED FIELDS TERMINATED BY ','LINES  TERMINATED BY '\n'
+STORED AS TEXTFILE
+LOCATION '/user/awsphani/public/retail_db/departments_load/';
+
+LOAD DATA LOCAL INPATH '/home/awsphani/data/retail_db/departments/part-00000' into table departments_ext_load
+
+awsphani_final - Create all 6 tables in hive as managed tables, delimiter is "|", also use gzip compression while storing the data
+
+#on mysql
+select * from orders into outfile '/tmp/orders.psv' fields terminated by '|' lines terminated by '\n';
+
+mysql -u retail_dba -h nn01.itversity.com -p
+
+as unable to find data | delimited, using , delimited
+
+awsphani_final - Create all 6 tables in hive as managed tables, delimiter is "|", also use gzip compression while storing the data
+
+CREATE TABLE departments_man
+(
+department_id int,
+department_name string
+)
+ROW FORMAT DELIMITED FIELDS TERMINATED BY ','LINES  TERMINATED BY '\n'
+STORED AS TEXTFILE
+LOCATION '/user/awsphani/public/retail_db/departments/';
+
+
+create table categories_man
+(
+category_id int,
+category_department_id int,
+category_name string
+)
+row format delimited fields terminated by ','
+stored as textfile
+location '/user/awsphani/public/retail_db/categories/';
+
+create table products_man
+(
+product_id int,
+product_category_id int,
+product_name string,
+product_description string,
+product_price float,
+product_image string
+)
+row format delimited fields terminated by ','
+stored as textfile
+location '/user/awsphani/public/retail_db/products/';
+
+
+create table customers_man
+(
+customer_id int,
+customer_fname string,
+customer_lname string,
+customer_email string,
+customer_password string,
+customer_street string,
+customer_city string,
+customer_state string,
+customer_zipcode string
+)
+row format delimited fields terminated by ','
+stored as textfile
+location '/user/awsphani/public/retail_db/customers/';
+
+
+create table orders_man
+(
+order_id int,
+order_date string,
+order_customer_id int,
+order_status string
+)
+row format delimited fields terminated by ','
+stored as textfile
+location '/user/awsphani/public/retail_db/orders/';
+
+create table order_items_man
+(
+order_item_id int,
+order_item_order_id int,
+order_item_product_id int,
+order_item_quantity int,
+order_item_subtotal float,
+order_item_product_price float
+)
+row format delimited fields terminated by ','
+stored as textfile
+location '/user/awsphani/public/retail_db/order_items/';
+
+
+Also create 2 additional tables for orders and order_items where both tables are bucketed by order_id
+Create another table for orders where data is partitioned by order_month
+
+create table orders_man_buc
+(
+order_id int,
+order_date string,
+order_customer_id int,
+order_status string
+)
+CLUSTERED BY (order_id)  into 5 buckets
+row format delimited fields terminated by ','
+stored as textfile
+
+set hive.enforce.bucketing=true;
+
+insert into table orders_man_buc
+select * from awsphani_stage.orders_ext;
+
+dfs -ls hdfs://nn01.itversity.com:8020/apps/hive/warehouse/awsphani_final.db/orders_managed
+
+
+CREATE TABLE `orders_man_prt`
+(
+  `order_id` int, 
+  `order_date` string, 
+  `order_customer_id` int, 
+  `order_status` string
+  )
+PARTITIONED BY (order_month string)  
+ROW FORMAT DELIMITED 
+  FIELDS TERMINATED BY ','
+  LINES  TERMINATED BY '\n'
+STORED AS TEXTFILE;
+
+set hive.exec.dynamic.partition.mode=nonstrict;
+
+insert into table orders_man_prt partition(order_month)
+select t.*, concat(substr(order_date,1,4),substr(order_date,6,2)) order_month from orders_man t ;
+
+
+hive repair table- to sync the data and table definition
+
+example:
+msck repair table create table
+
+----------------------------------------------------------------------------------------------------------
+
+024:
+
+show functions;
+select current_date;
+select current_timestamp;
+select add_months(current_timestamp,3);
+select day(current_timestamp);
+describe date_format;
+select date_format(current_date, 'dd, MM,YYYY');
+hive -e "show functions;"|grep -i unix
+
+find product quantity 
+
+
+find top selling product (based on quantity)using order_items
+
+
+order_item_id int,
+order_item_order_id int,
+order_item_product_id int,
+order_item_quantity int,
+order_item_subtotal float,
+order_item_product_price float
+
+select order_item_product_id,sum(order_item_quantity) total_quantity 
+from order_items_ext 
+group by order_item_product_id
+having total_quantity >=10000
+order by total_quantity desc;
+
+
+select * from (select p.product_name,sum(oi.order_item_quantity) total_quantity 
+from order_items_ext oi join products_ext p
+on oi.order_item_product_id = p.product_id
+group by p.product_name
+order by total_quantity desc) q limit 5;
+
+also find the category name associated with productname.
+
+select * from (select category_name,product_name,sum(order_item_quantity) total_quantity 
+from order_items_ext oi 
+join products_ext p
+on oi.order_item_product_id = p.product_id
+join categories_ext c
+on p.product_category_id = c.category_id
+group by product_name,category_name
+order by total_quantity desc) q limit 5;
+
+
+get category_name,revenue for each category for each day
+
+select * from (select category_name,product_name,sum(order_item_quantity) total_quantity 
+from order_items_ext oi 
+join products_ext p
+on oi.order_item_product_id = p.product_id
+join categories_ext c
+on p.product_category_id = c.category_id
+group by product_name,category_name
+order by total_quantity desc) q limit 5;
+
+select order_date,category_name,sum(order_item_subtotal) daily_revenue
+from orders_ext o
+join order_items_ext oi
+on o.order_id = oi.order_item_order_id
+join products_ext p
+on oi.order_item_product_id = p.product_id
+join categories_ext c
+on p.product_category_id = c.category_id
+group by order_date,category_name
+order by order_date, daily_revenue desc;
+
+now get top 5 cats based on total quantity .....
+
+select * from
+(select category_name,product_name,total_quantity,
+rank() over (partition by category_name order by total_quantity desc) rnk
+from
+(select category_name,product_name,sum(order_item_quantity) total_quantity 
+from order_items_ext oi 
+join products_ext p
+on oi.order_item_product_id = p.product_id
+join categories_ext c
+on p.product_category_id = c.category_id
+group by product_name,category_name
+order by total_quantity desc) q )q1
+where rnk <=5;
 
 
 
